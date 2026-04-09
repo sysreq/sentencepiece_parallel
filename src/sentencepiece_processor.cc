@@ -68,7 +68,9 @@ void ConvertToUnicodeSpansInternal(SentencePieceText *spt) {
   size_t prev = 0;
   int ulen = 0;
   while (!str.empty()) {
-    const size_t mblen = std::max<int>(1, string_util::OneCharLen(str.data()));
+    const size_t mblen =
+        std::min(str.size(),
+                 static_cast<size_t>(std::max<int>(1, string_util::OneCharLen(str.data()))));
     for (int i = prev; i < prev + mblen; ++i) {
       utf8_to_unicode[i] = ulen;
     }

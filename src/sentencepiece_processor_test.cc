@@ -1707,6 +1707,14 @@ TEST(SentencePieceProcessorTest, ConvertToUnicodeSpansTest) {
     EXPECT_EQ(spt.pieces(2).begin(), 8);
     EXPECT_EQ(spt.pieces(2).end(), 10);
   }
+
+  for (const char lead : {static_cast<char>(0xC2), static_cast<char>(0xE0),
+                          static_cast<char>(0xF0)}) {
+    const auto spt = make_spt({std::string(1, lead)});
+    EXPECT_EQ(spt.pieces_size(), 1);
+    EXPECT_EQ(spt.pieces(0).begin(), 0);
+    EXPECT_EQ(spt.pieces(0).end(), 1);
+  }
 }
 
 }  // namespace sentencepiece
