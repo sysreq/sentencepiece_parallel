@@ -78,6 +78,17 @@ def get_cflags_and_libs(root):
         os.path.join(root, 'lib64/libsentencepiece.a'),
         os.path.join(root, 'lib64/libsentencepiece_train.a'),
     ]
+
+  # TCMalloc must NOT be linked into a Python extension .so.
+  # It causes segfaults because its thread-local caches can't initialise
+  # for threads created by the Python runtime (dual-allocator conflict).
+  # TCMalloc is linked into the standalone spm_train binary via cmake instead.
+
+  # Propagate target-specific optimizations when SPM_OPTIMIZE is set.
+  if os.environ.get('SPM_OPTIMIZE'):
+    opt_flags = os.environ['SPM_OPTIMIZE'].split()
+    cflags.extend(opt_flags)
+
   return cflags, libs
 
 
@@ -85,7 +96,10 @@ class build_ext(_build_ext):
   """Override build_extension to run cmake."""
 
   def build_extension(self, ext):
-    cflags, libs = get_cflags_and_libs('../build/root')
+    cflags, libs = get_cflags_and_libs('./build/root')
+
+    if len(libs) == 0:
+      cflags, libs = get_cflags_and_libs('../build/root')
 
     if len(libs) == 0:
       if is_sentencepiece_installed():

@@ -109,6 +109,7 @@ class Trainer : public TrainerInterface {
   // break the main training loop. desired_vocab_size_ = 1.1 * vocab_size_
   // for now.
   int desired_vocab_size_;
+  int64_t all_sentence_freq_ = 0;
 };
 }  // namespace unigram
 }  // namespace sentencepiece

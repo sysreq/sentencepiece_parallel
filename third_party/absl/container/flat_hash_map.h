@@ -15,14 +15,14 @@
 #ifndef ABSL_CONTAINER_FLAT_HASH_MAP_
 #define ABSL_CONTAINER_FLAT_HASH_MAP_
 
-#include <unordered_map>
+#include "third_party/ankerl/unordered_dense.h"
 
 namespace absl {
 
-template <typename K, typename V, typename Hash = std::hash<K>,
-          typename Eq = std::equal_to<K>,
-          typename Allocator = std::allocator<std::pair<const K, V>>>
-using flat_hash_map = std::unordered_map<K, V, Hash, Eq, Allocator>;
+template <typename K, typename V,
+          typename Hash = ankerl::unordered_dense::hash<K>,
+          typename Eq = std::equal_to<K>>
+using flat_hash_map = ankerl::unordered_dense::map<K, V, Hash, Eq>;
 
 }
 

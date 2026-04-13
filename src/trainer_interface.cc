@@ -506,7 +506,6 @@ END:
   }
 
   // Count character frequencies.
-  int64_t all_chars_count = 0;
   // A map from a character to {is_required_char, character count}.
   absl::flat_hash_map<char32, std::pair<bool, int64_t>> chars_count;
   for (const char32 c :
@@ -519,23 +518,39 @@ END:
     }
     chars_count[c].first = true;  // is_required_character.
   }
-  for (const auto &w : sentences_) {
-    for (const char32 c : string_util::UTF8ToUnicodeText(w.first)) {
-      if (!string_util::IsValidCodepoint(c)) continue;
-      if (c == 0x0000) {
-        LOG(INFO)
-            << "Found null character. The corpus must be encoded in utf-8.";
-        continue;
+
+  int64_t all_chars_count = 0;
+  {
+    const int num_threads = trainer_spec_.num_threads();
+    std::vector<absl::flat_hash_map<char32, int64_t>> local_counts(num_threads);
+    std::vector<int64_t> local_totals(num_threads, 0);
+
+    {
+      auto pool = std::make_unique<ThreadPool>(num_threads);
+      pool->StartWorkers();
+      for (int n = 0; n < num_threads; ++n) {
+        pool->Schedule([&, n]() {
+          for (size_t i = n; i < sentences_.size();
+               i += static_cast<size_t>(num_threads)) {
+            const auto &w = sentences_[i];
+            for (const char32 c : string_util::UTF8ToUnicodeText(w.first)) {
+              if (!string_util::IsValidCodepoint(c) || c == 0x0000 ||
+                  c == 0x0020) {
+                continue;
+              }
+              local_counts[n][c] += w.second;
+              local_totals[n] += w.second;
+            }
+          }
+        });
       }
-      if (c == 0x0020) {
-        // UTF8ToUnicodeText returns a white space if the text
-        // contains an interchange-invalid character.
-        CHECK_OR_RETURN(w.first.find(" ") == std::string::npos)
-            << "space must not be included in normalized string.";
-        continue;
+    }
+
+    for (int n = 0; n < num_threads; ++n) {
+      for (const auto &kv : local_counts[n]) {
+        chars_count[kv.first].second += kv.second;
       }
-      chars_count[c].second += w.second;
-      all_chars_count += w.second;
+      all_chars_count += local_totals[n];
     }
   }
   LOG(INFO) << "all chars count=" << all_chars_count;
@@ -567,16 +582,28 @@ END:
 
   // Replaces rare characters (characters not included in required_chars_)
   // with kUNKChar.
-  for (auto &w : sentences_) {
-    string_util::UnicodeText uw2;
-    for (const char32 c : string_util::UTF8ToUnicodeText(w.first)) {
-      if (port::ContainsKey(required_chars_, c)) {
-        uw2.push_back(c);
-      } else {
-        uw2.push_back(kUNKChar);
-      }
+  {
+    const int num_threads = trainer_spec_.num_threads();
+    auto pool = std::make_unique<ThreadPool>(num_threads);
+    pool->StartWorkers();
+    for (int n = 0; n < num_threads; ++n) {
+      pool->Schedule([&, n]() {
+        for (size_t i = n; i < sentences_.size();
+             i += static_cast<size_t>(num_threads)) {
+          string_util::UnicodeText uw2;
+          for (const char32 c :
+               string_util::UTF8ToUnicodeText(sentences_[i].first)) {
+            if (port::ContainsKey(required_chars_, c)) {
+              uw2.push_back(c);
+            } else {
+              uw2.push_back(kUNKChar);
+            }
+          }
+          sentences_[i].first = string_util::UnicodeTextToUTF8(uw2);
+          uw2.clear();
+        }
+      });
     }
-    w.first = string_util::UnicodeTextToUTF8(uw2);
   }
 
   if (trainer_spec_.model_type() != TrainerSpec::WORD &&
@@ -599,15 +626,37 @@ END:
 void TrainerInterface::SplitSentencesByWhitespace() {
   LOG(INFO) << "Tokenizing input sentences with whitespace: "
             << sentences_.size();
-  absl::flat_hash_map<std::string, int64_t> tokens;
-  for (const auto &s : sentences_) {
-    for (const auto &w :
-         SplitIntoWords(s.first, trainer_spec_.treat_whitespace_as_suffix(),
-                        trainer_spec_.allow_whitespace_only_pieces())) {
-      tokens[std::string(w)] += s.second;
+
+  const int num_threads = trainer_spec_.num_threads();
+  std::vector<absl::flat_hash_map<std::string, int64_t>> local_tokens(
+      num_threads);
+
+  {
+    auto pool = std::make_unique<ThreadPool>(num_threads);
+    pool->StartWorkers();
+    for (int n = 0; n < num_threads; ++n) {
+      pool->Schedule([&, n]() {
+        for (size_t i = n; i < sentences_.size();
+             i += static_cast<size_t>(num_threads)) {
+          for (const auto &w :
+               SplitIntoWords(sentences_[i].first,
+                              trainer_spec_.treat_whitespace_as_suffix(),
+                              trainer_spec_.allow_whitespace_only_pieces())) {
+            local_tokens[n][std::string(w)] += sentences_[i].second;
+          }
+        }
+      });
     }
   }
-  sentences_ = Sorted(tokens);
+
+  for (int n = 1; n < num_threads; ++n) {
+    for (const auto &kv : local_tokens[n]) {
+      local_tokens[0][kv.first] += kv.second;
+    }
+    local_tokens[n].clear();
+  }
+
+  sentences_ = Sorted(local_tokens[0]);
   LOG(INFO) << "Done! " << sentences_.size();
 }
 
